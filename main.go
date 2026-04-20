@@ -1,16 +1,17 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"threads-scraper/models"
 	"time"
 
-	"github.com/chromedp/chromedp"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -30,40 +31,48 @@ func initDB() {
 	}
 }
 
+var metaPropertyRe = regexp.MustCompile(`(?i)<meta[^>]+property=["']([^"']+)["'][^>]+content=["']([^"']*)["']`)
+var metaContentRe = regexp.MustCompile(`(?i)<meta[^>]+content=["']([^"']*)["'][^>]+property=["']([^"']+)["']`)
+
+func extractOGMeta(body, property string) string {
+	for _, re := range []*regexp.Regexp{metaPropertyRe, metaContentRe} {
+		for _, m := range re.FindAllStringSubmatch(body, -1) {
+			prop, content := m[1], m[2]
+			if re == metaContentRe {
+				prop, content = m[2], m[1]
+			}
+			if strings.EqualFold(prop, property) {
+				return html.UnescapeString(content)
+			}
+		}
+	}
+	return ""
+}
+
 func scrapePost(post *models.Post) error {
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
-	)
-	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
-	defer cancel()
-
-	ctx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
-	defer cancel()
-
-	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	var content, media string
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(post.RawURL),
-		chromedp.WaitVisible(`[data-pressable-container]`, chromedp.ByQuery),
-		chromedp.Evaluate(`
-			(function() {
-				const spans = [...document.querySelectorAll('[data-pressable-container] span[dir="auto"]')]
-					.filter(s => !s.closest('a') && !s.closest('time'));
-				return spans.length > 1 ? spans[1].innerText : (spans[0] ? spans[0].innerText : '');
-			})()
-		`, &content),
-		chromedp.AttributeValue(`[data-pressable-container] picture img`, "src", &media, nil),
-	)
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest("GET", post.RawURL, nil)
 	if err != nil {
-		log.Printf("failed to scrape post: %v", err)
 		return err
 	}
+	req.Header.Set("User-Agent", "facebookexternalhit/1.1")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
 
-	post.Content = content
-	post.Media = media
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	body := string(bodyBytes)
+
+	post.Content = extractOGMeta(body, "og:description")
+	post.Media = extractOGMeta(body, "og:image")
 	return nil
 }
 
