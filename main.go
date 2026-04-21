@@ -84,7 +84,7 @@ func getPost(rawURL string) (*models.Post, error) {
 	}
 
 	// cache hit
-	if err := db.Where("post_id = ?", post.PostID).First(&post).Error; err == nil {
+	if err := db.Where("user = ? AND post_id = ?", post.User, post.PostID).First(&post).Error; err == nil {
 		return &post, nil
 	}
 
