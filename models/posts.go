@@ -31,7 +31,8 @@ func (p *Post) ParseURL(rawURL string) error {
 		return fmt.Errorf("invalid threads url: %s", rawURL)
 	}
 	
-	p.RawURL = rawURL
+	u.RawQuery = ""
+	p.RawURL = u.String()
 	p.User = strings.TrimPrefix(parts[0], "@")
 	p.PostID = parts[2]
 	return nil

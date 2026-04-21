@@ -70,10 +70,22 @@ func scrapePost(post *models.Post) error {
 		return err
 	}
 	body := string(bodyBytes)
+	log.Printf("scrape %s → HTTP %d, body[:200]: %s", post.RawURL, resp.StatusCode, body[:min(200, len(body))])
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
 
 	post.Content = extractOGMeta(body, "og:description")
 	post.Media = extractOGMeta(body, "og:image")
 	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // getPost 從 cache 或 scrape 取得 post，共用邏輯
